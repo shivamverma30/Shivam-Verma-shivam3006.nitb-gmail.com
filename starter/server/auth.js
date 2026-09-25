@@ -48,35 +48,82 @@ export function issueAccessToken({ userId, orgId, role, permVersion }, secret) {
 }
 
 // ---------------------------------------------------------------------------
-// TODO — yours to implement.
+// verifyAccessToken — AUTH-DATA-MODEL.md §10
 //
-// Verify an access token and return its claims, or throw `unauthenticated(...)`.
-// The signing half above is done for you; the verifying half is the exercise.
-//
-// It must reject ALL of the following, each with a 401 UNAUTHENTICATED:
-//
-//   1. a token that is not three dot-separated segments
-//   2. a header or payload that is not valid base64url-encoded JSON
-//   3. a header whose `alg` is anything other than 'HS256', or whose `typ` is not 'JWT'
-//      -- read the header, do NOT trust it. This is the `alg: none` and
-//         algorithm-substitution defence. The constants ALG, ISS and AUD are above.
-//   4. a signature that does not match, compared in constant time
-//   5. an `exp` that is missing, not a number, or <= now (note: <=, not <)
-//   6. an `iss` or `aud` that is not ours
-//   7. a missing or empty `jti`
-//
-// On success, return the decoded claims object.
-//
-// AUTH-DATA-MODEL.md §10 lists the failure modes; §2 defines the claim set.
-// `node scripts/check-jwt.js` is the public test suite for this function.
+// The algorithm is pinned BEFORE the header is trusted. This is the structural
+// defence against alg:none and algorithm substitution: we never read the header's
+// alg claim to decide which algorithm to verify with.
 // ---------------------------------------------------------------------------
 export function verifyAccessToken(token, secret) {
-  // YOURS TO WRITE. Every failure mode listed above must be a 401 UNAUTHENTICATED.
-  // `node scripts/check-jwt.js` is the public suite for this function.
-  throw Object.assign(
-    new Error('TODO: server/auth.js — verifyAccessToken() is yours to write (AUTH-DATA-MODEL.md §10).'),
-    { code: 'NOT_IMPLEMENTED' }
-  );
+  // 1. Must be exactly three dot-separated segments
+  if (typeof token !== 'string' || token === '') throw unauthenticated('malformed token');
+  const parts = token.split('.');
+  if (parts.length !== 3) throw unauthenticated('malformed token: expected 3 segments');
+
+  const [rawHeader, rawPayload, rawSig] = parts;
+
+  // 2. Decode and parse header — must be valid base64url JSON object
+  let header;
+  try {
+    const decoded = JSON.parse(unb64(rawHeader).toString('utf8'));
+    if (decoded === null || typeof decoded !== 'object' || Array.isArray(decoded)) {
+      throw new Error('not an object');
+    }
+    header = decoded;
+  } catch {
+    throw unauthenticated('malformed token: invalid header');
+  }
+
+  // 3. Pin the algorithm — reject ANYTHING other than HS256/JWT.
+  // Do NOT trust header.alg for the verification step; this rejects alg:none
+  // and algorithm substitution structurally, not by denylist.
+  if (header.alg !== ALG) throw unauthenticated('malformed token: unsupported algorithm');
+  if (header.typ !== 'JWT') throw unauthenticated('malformed token: invalid typ');
+
+  // 4. Verify signature in constant time using the pinned algorithm.
+  // The signature is computed over "header.payload" (the raw base64url strings).
+  let sigBuf;
+  try {
+    sigBuf = unb64(rawSig);
+    if (sigBuf.length === 0) throw new Error('empty');
+  } catch {
+    throw unauthenticated('malformed token: invalid signature encoding');
+  }
+
+  const expected = createHmac('sha256', secret).update(`${rawHeader}.${rawPayload}`).digest();
+  if (sigBuf.length !== expected.length || !timingSafeEqual(sigBuf, expected)) {
+    throw unauthenticated('invalid token signature');
+  }
+
+  // 5. Decode and parse payload — must be valid base64url JSON object
+  let claims;
+  try {
+    const decoded = JSON.parse(unb64(rawPayload).toString('utf8'));
+    if (decoded === null || typeof decoded !== 'object' || Array.isArray(decoded)) {
+      throw new Error('not an object');
+    }
+    claims = decoded;
+  } catch {
+    throw unauthenticated('malformed token: invalid payload');
+  }
+
+  // 6. Validate exp — must be a number, and must be strictly greater than now.
+  // Half-open: exp == now is already expired (AUTH-DATA-MODEL.md D7).
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (typeof claims.exp !== 'number' || claims.exp <= nowSec) {
+    throw unauthenticated('token expired or missing exp');
+  }
+
+  // 7. Validate iss and aud
+  if (claims.iss !== ISS) throw unauthenticated('invalid token issuer');
+  if (claims.aud !== AUD) throw unauthenticated('invalid token audience');
+
+  // 8. Validate jti — must be present and non-empty
+  if (!claims.jti || typeof claims.jti !== 'string' || claims.jti.trim() === '') {
+    throw unauthenticated('missing or empty jti');
+  }
+
+  return claims;
 }
 
 
