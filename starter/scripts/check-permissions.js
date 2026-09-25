@@ -2,6 +2,7 @@
 // Every case here is a vector from PERMISSIONS.md §11 or §12. Run: node scripts/check-permissions.js
 
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { openDatabase, nowIso, bumpPermVersion, newId } from '../server/db.js';
 import { resolve, can, assertCanStartSession } from '../server/permissions.js';
 
