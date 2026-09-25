@@ -9,6 +9,7 @@
 import http from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
 import { extname, join, normalize } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { createRouter } from './router.js';
 import { openDatabase } from './db.js';
@@ -19,7 +20,9 @@ import { registerRoutes } from './routes/index.js';
 const DEV = process.env.NODE_ENV !== 'production';
 const PORT = Number(process.env.PORT ?? 8080);
 const SECRET = process.env.JWT_SECRET ?? 'dev-secret-change-me';
-const DIST = new URL('../dist/', import.meta.url).pathname;
+// fileURLToPath handles the /D:/... -> D:\... conversion on Windows;
+// .pathname alone yields a leading slash that join() mishandles.
+const DIST = fileURLToPath(new URL('../dist/', import.meta.url));
 
 const db = openDatabase();
 const router = createRouter();
