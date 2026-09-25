@@ -1,17 +1,31 @@
-// Route registration. The router is deliberately tiny: createRouter() from
-// ../router.js, first match wins, so register specific paths before parameterised
-// ones ('/members/me' before '/members/:userId').
+// Route registration. The router is tiny: first match wins, so specific paths must
+// be registered before parameterised ones ('/members/me' before '/members/:userId').
 //
-// YOURS TO WRITE. The file list is empty on purpose — every endpoint in BRIEF.md §5.1
-// is yours to add, and the response shapes the console reads are in §5.2.
-//
-// Suggested split, mirroring the API: auth, orgs (orgs + members + effective + audit),
-// invites, devices (devices + grants), sessions. Keep the registration order here.
-//
-// The server boots with this file empty: every /v1/* request returns 404 until you
-// register something. That is the intended starting line.
+// Registration order matters for the router's first-match-wins behaviour.
+
+import { registerAuthRoutes } from './auth.js';
+import { registerOrgRoutes } from './orgs.js';
+import { registerInviteRoutes } from './invites.js';
+import { registerDeviceRoutes } from './devices.js';
+import { registerSessionRoutes } from './sessions.js';
 
 export function registerRoutes(router, deps) {
-  const { db, secret } = deps;
-  void db; void secret;
+  // Auth first (login, refresh, token, me)
+  registerAuthRoutes(router, deps);
+
+  // Invites — register public token routes and org-scoped invite routes.
+  // Must come before orgs so /orgs/:org/invites is registered, and the
+  // public /invites/:token routes are distinct paths.
+  registerInviteRoutes(router, deps);
+
+  // Orgs, members, effective, audit.
+  // NOTE: orgs.js registers /members/me before /members/:userId internally,
+  // which is required for first-match-wins routing.
+  registerOrgRoutes(router, deps);
+
+  // Devices and grants
+  registerDeviceRoutes(router, deps);
+
+  // Sessions
+  registerSessionRoutes(router, deps);
 }
