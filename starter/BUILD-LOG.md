@@ -102,6 +102,10 @@ Verified with `check-api.js` compound session tests: correct reasons for each fa
 **Exclusivity (D10):**
 The unique index `one_exclusive_session_per_device` handles the race — two simultaneous `control` inserts, exactly one will get the constraint violation. I catch SQLite constraint errors on session INSERT and map them to 409 DEVICE_BUSY.
 
+**Bug I hit: plain-object throws became 500s.** My first run of `check-api.js` reported `2nd control on same device -> 409 got 500` and `code DEVICE_BUSY got "INTERNAL"`. The cause: I threw `{ status: 409, code: 'DEVICE_BUSY', ... }` as a plain object, but `sendError` in http.js only reads status/code off `HttpError` instances — everything else is `500 INTERNAL`. Same bug hit `insufficient_rank` (lifecycle.js) and `unknown_permission` (devices.js). Converting all three to `HttpError`/`badRequest(msg, reason)` fixed five failures at once and took check-api from 61/66 to 66/66 in two passes.
+
+**The documented divergence (owner-modifies-owner).** After the error-type fix, one case remained: `demoting a NON-last owner is allowed got 403 want 200`. PERMISSIONS.md §6 says "equal role → 403", but check-api.js expects an owner to demote another owner. I initially built the strict "equal → 403" reading. Reading the reference lifecycle.js confirmed the intended rule: the top role may modify anyone. I expressed it data-driven (max rank in the roles table may modify anyone) rather than hardcoding `'owner'`, so it survives the overlay. Documented fully in DECISIONS.md.
+
 **Session grandfathering:**
 Permission changes do NOT end sessions. Suspension, removal, and device transfer DO. I separate these two paths explicitly: permission/role changes call `bumpPermVersion` only; suspension/removal/transfer call `endActiveSessions` in addition.
 
@@ -120,13 +124,15 @@ The `audit_events` table has triggers that prevent UPDATE and DELETE — the app
 
 ## 2026-09-26 · Phase 7 — the console
 
-Server-driven presence: the React components read `permissions` from the API response and render elements only when `effect === 'allow'`. No role-to-permission table anywhere in the frontend. The architecture test in `ui.spec.js` (intercepting the device list response and flipping an effect to deny) verifies this works correctly.
+Server-driven presence: the React components read `permissions` from the API response and render elements only when `effect === 'allow'` (the `Action` component and `isAllowed` helper). No role-to-permission table anywhere in the frontend. The architecture test in `ui.spec.js` (intercepting the device list response and flipping an effect to deny) verifies this works correctly — it passed on the first UI run.
 
-Per-org visual identity: each org has a `theme` property from the database. I map theme names to background colors in a CSS-in-JS object and apply it to the app shell. The test asserts that `backgroundColor` changes when switching orgs.
+Per-org visual identity: each org has a `theme` property from the database. `styles.css` maps `data-org-theme` values to distinct shell background colors. The test `switching orgs measurably changes the rendered appearance` asserts `backgroundColor` actually changes — it does.
 
-Token storage: access token in React state (memory). Refresh token arrives as an httpOnly cookie (set by the server) and is sent on `/auth/refresh` automatically. Nothing written to localStorage or sessionStorage.
+Token storage: access token in `api.js` module memory. Refresh token arrives as an httpOnly cookie and is sent on `/auth/refresh` automatically. Nothing written to localStorage or sessionStorage — the `no token is persisted in web storage` test confirms this.
 
-Reload handling: on mount, the app tries `/auth/refresh` before showing the login form. If the refresh cookie is present and valid, the user is silently re-authenticated.
+**Second Windows path bug, found via the UI tests.** All 25 playwright tests timed out at 30s on the first run — the login never completed. Curling `/` returned `NOT_FOUND`. Root cause: `server/index.js` computed `DIST = new URL('../dist/', import.meta.url).pathname`, which on Windows yields `/D:/.../dist/` and `join()` mishandles it, so `serveStatic` never found `index.html` and the SPA never loaded. Same class of bug as Phase 0's load-db issue. Fixed with `fileURLToPath`. After the fix the SPA served and 24/25 passed.
+
+**Prediction that was wrong: invite-accept auto-login.** The one remaining UI failure was `an invite link can be redeemed`: after accepting, the test expects the `login-form` to appear. My accept flow navigated to `/` — but the app's mount-time `/auth/refresh` then auto-logged-in using the refresh cookie the accept had just set, so the shell appeared instead of the login form. I expected "accept → land on login". Fix: accept navigates to an explicit `/login` route that deliberately skips the refresh attempt, so the user signs in fresh. 25/25 after that.
 
 ---
 

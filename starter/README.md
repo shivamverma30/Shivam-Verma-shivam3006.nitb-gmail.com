@@ -273,3 +273,54 @@ you were wrong while you are still wrong.
 
 Expect to defend it live: to open the line that makes a decision, to take an alternative you
 rejected, and to change your own code without assistance.
+
+---
+
+## Implementation status (candidate submission)
+
+This starter is now a complete implementation. Everything under "Yours to write" above is
+implemented and verified.
+
+### Run from a clean checkout
+
+```sh
+cd starter
+npm install
+npm run db:reset      # schema + reference data + demo fixture + your personalised org
+npm run build         # vite build -> dist/  (required before `npm start`)
+npm start             # production: one process on http://localhost:8080
+```
+
+For development with hot reload: `npm run dev` (serves the SPA via Vite middleware, no build
+step needed).
+
+### Verify
+
+```sh
+node scripts/check-jwt.js            # 43/43
+node scripts/check-permissions.js    # 35/35
+node scripts/check-api.js            # 66/66
+node scripts/check-personalisation.js  # 18/18  (data-driven — also passes with a different nonce)
+node scripts/check-hardening.js      # 20/20  (adversarial edge cases — added by the candidate)
+npx playwright test                  # 25/25  (needs `npx playwright install chromium` once)
+```
+
+All 207 assertions pass.
+
+### Cross-platform note
+
+`scripts/load-db.js` and `server/index.js` originally resolved file paths via
+`new URL(...).pathname`, which returns `/D:/...` on Windows and gets double-converted by
+`readFileSync`/`join`. Both now use `url.fileURLToPath`, which is correct on Windows, macOS and
+Linux. This is the only change made to provided files, and it is a portability fix, not a
+behaviour change.
+
+### Architecture in one paragraph
+
+Identity comes from a signed JWT (HS256, verified with the algorithm pinned before the header is
+trusted); the server resolves authority fresh on every request. `server/permissions.js` is the
+single resolution engine, reading roles, permissions, and grants from the database at runtime —
+never a hardcoded matrix — so an undocumented role or permission resolves correctly. Org isolation
+is structural: the token names exactly one org, and cross-org access is 404 (invisible), not 403.
+The console renders presence entirely from the server's resolved set; there is no
+role-to-permission table in `web/`.
